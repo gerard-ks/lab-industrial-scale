@@ -1,0 +1,173 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: lab_user
+      POSTGRES_PASSWORD: lab_password
+      POSTGRES_DB: lab_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - lab_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_user -d lab_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@lab.com
+      PGADMIN_DEFAULT_PASSWORD: admin_password
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+    ports:
+      - "8081:80"
+    volumes:
+      - ./servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  temporal-admin-tools:
+    image: temporalio/admin-tools:1.29.6
+    depends_on:
+      postgres:
+        condition: service_healthy   #healthcheck plutôt que nc
+    environment:
+      - SQL_PLUGIN=postgres12
+      - SQL_HOST=postgres
+      - SQL_PORT=5432
+      - SQL_USER=lab_user
+      - SQL_PASSWORD=lab_password
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Setup schéma principal..."
+        temporal-sql-tool \
+          --plugin postgres12 \
+          --ep postgres \
+          --port 5432 \
+          --user lab_user \
+          --password lab_password \
+          --db temporal_db \
+          setup-schema -v 0.0
+
+        echo "Update schéma principal..."
+        temporal-sql-tool \
+          --plugin postgres12 \
+          --ep postgres \
+          --port 5432 \
+          --user lab_user \
+          --password lab_password \
+          --db temporal_db \
+          update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
+
+        echo "Setup schéma visibilité..."
+        temporal-sql-tool \
+          --plugin postgres12 \
+          --ep postgres \
+          --port 5432 \
+          --user lab_user \
+          --password lab_password \
+          --db temporal_visibility_db \
+          setup-schema -v 0.0
+
+        echo "Update schéma visibilité..."
+        temporal-sql-tool \
+          --plugin postgres12 \
+          --ep postgres \
+          --port 5432 \
+          --user lab_user \
+          --password lab_password \
+          --db temporal_visibility_db \
+          update-schema -d /etc/temporal/schema/postgresql/v12/visibility/versioned
+
+        echo "Schémas injectés avec succès !"
+
+  temporal:
+    image: temporalio/server:1.29.6
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12                          # ← valeur exacte reconnue par docker.yaml
+      - DB_PORT=5432
+      - POSTGRES_SEEDS=postgres                # ← hostname du container
+      - POSTGRES_USER=lab_user
+      - POSTGRES_PWD=lab_password             # ← PWD pas PASSWORD
+      - DBNAME=temporal_db
+      - VISIBILITY_DBNAME=temporal_visibility_db
+      - BIND_ON_IP=0.0.0.0
+      - TEMPORAL_BROADCAST_ADDRESS=127.0.0.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal-admin-tools:
+        condition: service_completed_successfully
+  temporal-ui:
+    image: temporalio/ui:2.50.0
+    ports:
+      - "8088:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+
+  nats:
+    image: nats:2.14-alpine
+    command: [ "-js", "-sd", "/data", "-m", "8222" ] # Indispensable : active la persistance JetStream !
+    ports:
+      - "4222:4222" # Port d'application
+      - "8222:8222" # Port de monitoring Web
+    volumes:
+      - nats_data:/data
+  nui:
+    image: ghcr.io/nats-nui/nui:latest
+    ports:
+      - "8082:31311"
+    volumes:
+      - nui_db:/db
+    depends_on:
+      - nats
+  nats-init:
+    image: natsio/nats-box:latest
+    depends_on:
+      - nats
+    command: >
+      sh -c "
+      set -e;
+
+      echo 'Génération de la configuration du Stream Principal...';
+      echo '{\"name\": \"EVENT_STORE\", \"subjects\": [\"events.>\"], \"retention\": \"limits\", \"max_msgs\": -1, \"max_bytes\": -1, \"max_age\": 31536000000000000, \"storage\": \"file\", \"num_replicas\": 1}' > /tmp/stream_main.json;
+
+      echo 'Génération de la configuration du Stream DLQ...';
+      echo '{\"name\": \"DLQ_EVENTS\", \"subjects\": [\"$$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.EVENT_STORE.>\"], \"retention\": \"limits\", \"max_msgs\": -1, \"max_bytes\": -1, \"max_age\": 31536000000000000, \"storage\": \"file\", \"num_replicas\": 1}' > /tmp/stream_dlq.json;
+
+      echo 'Création du Stream Principal...';
+      nats stream add --config /tmp/stream_main.json -s nats:4222;
+
+      echo 'Création du Stream DLQ...';
+      nats stream add --config /tmp/stream_dlq.json -s nats:4222;
+
+      echo 'Streams NATS créés avec succès !';
+      "
+
+  redpanda-connect:
+    image: redpandadata/connect:latest
+    command: [ "streams", "/config/**/*.yaml" ]
+    depends_on:
+      postgres:
+        condition: service_healthy # <--- ATTEND que le healthcheck de Postgres soit OK
+      nats:
+        condition: service_started # <--- NATS n'a pas de healthcheck, on se contente de vérifier qu'il est démarré
+    volumes:
+      - ./redpanda-connect:/config:ro
+
+volumes:
+  lab_data:
+  nats_data:
+  pgadmin_data:
+  nui_db:

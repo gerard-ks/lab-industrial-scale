@@ -1,0 +1,33 @@
+# ==========================================
+# MODULE ORDER : OUTBOX -> NATS JETSTREAM
+# ==========================================
+
+input:
+  sql_select:
+    driver: postgres
+    dsn: postgres://lab_user:lab_password@postgres:5432/lab_db
+    table: order_schema.outbox
+    columns: [ "*" ]
+    # On lit les messages dans l'ordre chronologique
+    suffix: "ORDER BY created_at ASC"
+
+pipeline:
+  processors:
+    - mapping: |
+        # 1. On crée le sujet NATS dynamiquement (ex: 'events.ReserveStockCommand')
+        meta nats_subject = "events." + this.event_type
+        
+        # 2. On structure le message au format CloudEvents (Standard Industriel)
+        root.eventId = this.id
+        root.eventType = this.event_type
+        root.aggregateId = this.aggregate_id
+        root.version = this.version
+        root.correlationId = this.correlation_id
+        root.causationId = this.causation_id
+        root.payload = this.payload
+
+output:
+  nats_jetstream:
+    urls: [ "nats://nats:4222" ]
+    subject: ${! @nats_subject } # Utilise la métadonnée créée dans le processor
+    max_in_flight: 64 # Optimisation réseau
