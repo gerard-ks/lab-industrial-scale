@@ -7,6 +7,6 @@ import java.util.UUID;
 
 @ActivityInterface
 public interface InventoryActivities {
-    @ActivityMethod
+    @ActivityMethod(name = "reserveStock")
     void reserveStock(UUID orderId, String productId);
 }

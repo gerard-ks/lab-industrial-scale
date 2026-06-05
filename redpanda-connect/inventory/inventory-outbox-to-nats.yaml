@@ -1,33 +1,71 @@
 # ==========================================
-# MODULE ORDER : OUTBOX -> NATS JETSTREAM
+# MODULE INVENTORY : OUTBOX -> NATS JETSTREAM
 # ==========================================
 
 input:
-  sql_select:
-    driver: postgres
-    dsn: postgres://lab_user:lab_password@postgres:5432/lab_db
-    table: inventory_schema.outbox
-    columns: [ "*" ]
-    # On lit les messages dans l'ordre chronologique
-    suffix: "ORDER BY created_at ASC"
+  generate:
+    interval: 1s
+    mapping: 'root = {}'
 
 pipeline:
   processors:
+    - sql_select:
+        driver: postgres
+        dsn: postgres://lab_user:lab_password@postgres:5432/lab_db
+        table: inventory_schema.outbox
+        columns: [ "id::text", "event_type", "aggregate_type", "aggregate_id::text", "version", "correlation_id::text", "causation_id::text", "payload::text", "created_at" ]
+        where: "processed = false"
+        suffix: "ORDER BY created_at ASC LIMIT 100"
+
     - mapping: |
-        # 1. On crée le sujet NATS dynamiquement (ex: 'events.ReserveStockCommand')
-        meta nats_subject = "events." + this.event_type
-        
-        # 2. On structure le message au format CloudEvents (Standard Industriel)
-        root.eventId = this.id
-        root.eventType = this.event_type
-        root.aggregateId = this.aggregate_id
-        root.version = this.version
+        root = if this.length() == 0 { deleted() } else { this }
+
+    - log:
+        level: INFO
+        message: 'sql_select result : ${! content() }'
+
+    - unarchive:
+        format: json_array
+
+    - log:
+        level: INFO
+        message: 'après unarchive : ${! content() }'
+
+    - log:
+        level: INFO
+        message: 'après parse_json : ${! content() }'
+
+    - mapping: |
+        meta id           = this.id
+        meta nats_subject = "events.inventory." + this.event_type
+
+        root.eventId       = this.id
+        root.eventType     = this.event_type
+        root.aggregateType = this.aggregate_type
+        root.aggregateId   = this.aggregate_id
+        root.version       = this.version
         root.correlationId = this.correlation_id
-        root.causationId = this.causation_id
-        root.payload = this.payload
+        root.causationId   = this.causation_id
+        root.payload       = this.payload.parse_json()
+
+    - log:
+        level: INFO
+        message: 'après mapping métier : ${! content() }'
 
 output:
   nats_jetstream:
     urls: [ "nats://nats:4222" ]
-    subject: ${! @nats_subject } # Utilise la métadonnée créée dans le processor
-    max_in_flight: 64 # Optimisation réseau
+    subject: ${! @nats_subject }
+    max_in_flight: 64
+  processors:
+    - branch:
+        processors:
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://lab_user:lab_password@postgres:5432/lab_db
+              query: "UPDATE inventory_schema.outbox SET processed = true WHERE id = $1;"
+              args_mapping: '[ meta("id") ]'
+
+        # 'result_map' vide ou non spécifié : le résultat du sql_raw ([])
+        # est jeté, et le message original reste intact pour l'envoi à NATS.
+        result_map: ""
