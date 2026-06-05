@@ -22,8 +22,27 @@ spring:
   temporal:
     connection:
       target: "127.0.0.1:7233" # Pointe vers le port gRPC du conteneur Docker Temporal
+
+    workers-auto-discovery:
+      workflow-packages:
+        - com.poc.modules.order.internal.workflow
+        - com.poc.modules.inventory.internal.workflow
+        - com.poc.modules.notification.internal.workflow
+      register-activity-beans: true
+
+
     # On définit les "Task Queues" (Files d'attente) que nos Workers Java vont écouter
     workers:
       - task-queue: "OrderTaskQueue"
       - task-queue: "InventoryTaskQueue"
       - task-queue: "NotificationTaskQueue"
+
+chaos:
+  monkey:
+    force-stock-fail: false
+
+
+logging:
+  level:
+    io.temporal: DEBUG
+    io.temporal.spring.boot: DEBUG

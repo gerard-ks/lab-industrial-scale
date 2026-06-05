@@ -1,5 +1,5 @@
 # ==========================================
-# MODULE ORDER : NATS JETSTREAM -> INBOX
+# MODULE NOTIFICATION : NATS JETSTREAM -> INBOX
 # ==========================================
 
 input:
@@ -11,19 +11,25 @@ input:
     # L'Order est l'Orchestrateur, il doit écouter les réponses de l'Inventory (Participant)
     # Un seul champ 'subject' (Singulier) avec Wildcard
     # Capte events.OrderValidatedEvent ET events.OrderCancelledEvent
-    subject: "events.Order*"
+    subject: "events.order.*"
 
     # 2. La Résilience NATS
     durable: notification-consumer
 
 pipeline:
   processors:
+    - log:
+        level: INFO
+        message: 'Contenu brut NATS : ${! content() }'
+
     - mapping: |
-        # On prépare les colonnes pour l'insertion SQL dans l'Inbox
         root.message_id = this.eventId
-        root.handler_name = "NotificationConsumer"
-        root.payload = this.payload.string()
-        root.correlation_id = this.correlationId # Vital pour que Java retrouve la Saga !
+        root.handler_name = "Notification-" + this.eventType
+        root.correlation_id = this.correlationId
+        root.payload = this.payload
+    - log:
+        level: INFO
+        message: "Contenu mappé : ${! content() }"
 
 output:
   sql_insert:
@@ -32,8 +38,12 @@ output:
     table: notification_schema.inbox
     columns: [ message_id, handler_name, correlation_id, payload ]
     args_mapping: |
-      root = [ this.message_id, this.handler_name, this.correlation_id, this.payload ]
-
+      root = [
+        this.message_id,
+        this.handler_name,
+        this.correlation_id,
+        this.payload.string()
+      ]
     # 3. L'Idempotence (Le Bouclier Anti-Doublon)
     # Si le (message_id + handler_name) existe déjà en base, Postgres refuse l'insertion.
     # Le 'DO NOTHING' dit à Redpanda : "C'est pas grave, c'est un doublon, fais un ACK à NATS et passe à la suite".

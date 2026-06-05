@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS notification_schema.inbox (
 
     -- L'État du Worker Java (Est-ce que l'Orchestrateur l'a lu ?)
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    CONSTRAINT chk_inbox_status CHECK (status IN ('PENDING', 'PROCESSED', 'FAILED')),
+    CONSTRAINT chk_inbox_status CHECK (status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED')),
 
     -- Observabilité et Purge
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

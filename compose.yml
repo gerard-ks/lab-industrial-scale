@@ -8,7 +8,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - lab_data:/var/lib/postgresql/data
+      - lab_data:/var/lib/postgresql
       - ./init-scripts:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lab_user -d lab_db"]
@@ -107,6 +107,22 @@ services:
         condition: service_healthy
       temporal-admin-tools:
         condition: service_completed_successfully
+  temporal-init-namespace:
+    image: temporalio/admin-tools:1.29.6
+    depends_on:
+      temporal:
+        condition: service_started
+    environment:
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Attente du démarrage du serveur gRPC de Temporal..."
+        sleep 5
+        echo "Enregistrement du namespace par défaut via tctl..."
+        tctl --ns default namespace register --rd 1 || true
+        echo "Namespace 'default' configuré avec succès !"
   temporal-ui:
     image: temporalio/ui:2.50.0
     ports:
@@ -155,9 +171,15 @@ services:
       echo 'Streams NATS créés avec succès !';
       "
 
+
   redpanda-connect:
     image: redpandadata/connect:latest
-    command: [ "streams", "/config/**/*.yaml" ]
+    command:
+      - streams
+      - /config/inventory/inventory-outbox-to-nats.yaml
+      - /config/order/order-outbox-to-nats.yaml
+      - /config/notification/notification-nats-to-inbox.yaml
+     # - /config/test/mini-test.yaml
     depends_on:
       postgres:
         condition: service_healthy # <--- ATTEND que le healthcheck de Postgres soit OK

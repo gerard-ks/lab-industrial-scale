@@ -74,27 +74,32 @@ public class InboxProcessor {
                     try {
                         T event = objectMapper.readValue(msg.payload(), eventClass);
 
-                        // 3. Transaction B : Exécution métier + Passage à PROCESSED
+                        // BONNE PRATIQUE : On valide d'abord l'état en base de données
                         txTemplate.executeWithoutResult(status -> {
-                            businessLogic.accept(event);
                             jdbcClient.sql(updateProcessedSql)
                                     .param(msg.messageId())
                                     .param(handlerName)
                                     .update();
                         });
 
-                        log.debug("[Inbox] Message {} traité avec succès par {}", msg.messageId(), handlerName);
+                        // ÉTAPE INTERNE : L'action extérieure n'est déclenchée que si le SQL a réussi
+                        try {
+                            businessLogic.accept(event);
+                            log.debug("[Inbox] Message {} traité avec succès par {}", msg.messageId(), handlerName);
+                        } catch (Exception e) {
+                            // Si Temporal est en panne complète, on force un Rollback manuel du statut pour rejeu
+                            log.error("[Inbox] Erreur lors du déclenchement extérieur, rejeu nécessaire.", e);
+                            throw e;
+                        }
 
                     } catch (Exception e) {
-                        log.error("[Inbox] Échec du traitement métier pour le message {}", msg.messageId(), e);
-
+                        log.error("[Inbox] Échec du traitement pour le message {}", msg.messageId(), e);
                         // 4. Échec : Retour à PENDING ou passage en FAILED (DLQ Locale)
-                        txTemplate.executeWithoutResult(status ->
-                                jdbcClient.sql(updateFailedSql)
-                                        .param(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())
-                                        .param(msg.messageId())
-                                        .param(handlerName)
-                                        .update()
+                        txTemplate.executeWithoutResult(status -> jdbcClient.sql(updateFailedSql)
+                                .param(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())
+                                .param(msg.messageId())
+                                .param(handlerName)
+                                .update()
                         );
                     }
                 }
