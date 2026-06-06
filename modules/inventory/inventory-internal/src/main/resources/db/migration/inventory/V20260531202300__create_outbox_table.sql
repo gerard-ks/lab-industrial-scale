@@ -7,8 +7,7 @@ CREATE TABLE IF NOT EXISTS inventory_schema.outbox (
     correlation_id UUID NOT NULL,
     causation_id UUID,
     payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    processed BOOLEAN NOT NULL DEFAULT FALSE
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_inv_outbox_polling ON inventory_schema.outbox(processed, created_at);
+CREATE INDEX idx_inv_outbox_retention ON inventory_schema.outbox(created_at);

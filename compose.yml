@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:18-alpine
+    command: ["postgres", "-c", "wal_level=logical"]
     environment:
       POSTGRES_USER: lab_user
       POSTGRES_PASSWORD: lab_password
@@ -140,6 +141,11 @@ services:
       - "8222:8222" # Port de monitoring Web
     volumes:
       - nats_data:/data
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "8222" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   nui:
     image: ghcr.io/nats-nui/nui:latest
     ports:
@@ -172,24 +178,22 @@ services:
       "
 
 
-  redpanda-connect:
-    image: redpandadata/connect:latest
-    command:
-      - streams
-      - /config/inventory/inventory-outbox-to-nats.yaml
-      - /config/order/order-outbox-to-nats.yaml
-      - /config/notification/notification-nats-to-inbox.yaml
-     # - /config/test/mini-test.yaml
+  debezium-server:
+    image: debezium/server:3.0.0.Final
     depends_on:
       postgres:
-        condition: service_healthy # <--- ATTEND que le healthcheck de Postgres soit OK
+        condition: service_healthy
       nats:
-        condition: service_started # <--- NATS n'a pas de healthcheck, on se contente de vérifier qu'il est démarré
+        condition: service_healthy
     volumes:
-      - ./redpanda-connect:/config:ro
+      # Lie votre dossier local au dossier de configuration interne de Debezium
+      - ./debezium-config:/debezium/config:ro
+      - debezium_data:/debezium/data
+
 
 volumes:
   lab_data:
   nats_data:
   pgadmin_data:
   nui_db:
+  debezium_data:
