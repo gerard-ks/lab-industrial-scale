@@ -20,6 +20,7 @@
 
     <properties>
         <spring-boot.version>3.5.14</spring-boot.version>
+        <nats.version>2.25.3</nats.version>
         <temporal.version>1.35.0</temporal.version>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
@@ -97,6 +98,12 @@
                 <artifactId>temporal-testing</artifactId>
                 <version>${temporal.version}</version>
                 <scope>test</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>io.nats</groupId>
+                <artifactId>jnats</artifactId>
+                <version>${nats.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

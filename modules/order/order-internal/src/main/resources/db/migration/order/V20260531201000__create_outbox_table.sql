@@ -17,11 +17,9 @@ CREATE TABLE IF NOT EXISTS order_schema.outbox (
     payload JSONB NOT NULL,
 
     -- Pour le Polling de Redpanda Connect
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    -- État de publication (Bouclier anti-boucle infinie)
-    processed BOOLEAN NOT NULL DEFAULT FALSE
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Index pour que Redpanda trouve rapidement les nouvelles lignes sans table scan
-CREATE INDEX idx_order_outbox_polling ON order_schema.outbox(processed, created_at);
+-- BONNE PRATIQUE : Index simple sur created_at uniquement pour accélérer
+-- la purge de nuit asynchrone (ex: DELETE WHERE created_at < NOW() - 3 days)
+CREATE INDEX idx_order_outbox_retention ON order_schema.outbox(created_at);
